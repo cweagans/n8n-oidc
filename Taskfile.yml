@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+vars:
+  N8N_VERSION: 2.1.1
+
+tasks:
+  get-n8n:
+    desc: Checkout n8n source code
+    cmds:
+      - git clone --branch n8n@{{.N8N_VERSION}} https://github.com/n8n-io/n8n.git n8n-src
+    generates:
+      - n8n-src

@@ -1,0 +1,33 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.1.1
+    restart: always
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=${SUBDOMAIN}.${DOMAIN_NAME}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=https://n8n.${SUBDOMAIN}.${DOMAIN_NAME}/
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+      - EXTERNAL_HOOK_FILES=/home/node/.n8n/hooks.js
+      # Trust proxy for rate limiting (fixes X-Forwarded-For header issue)
+      - N8N_TRUST_PROXY=true
+      # OIDC Configuration
+      - OIDC_ISSUER_URL=${OIDC_ISSUER_URL}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      - OIDC_REDIRECT_URI=https://n8n.${SUBDOMAIN}.${DOMAIN_NAME}/auth/oidc/callback
+      - N8N_PROXY_HOPS=1
+      # Frontend hooks for OIDC login customization
+      - EXTERNAL_FRONTEND_HOOKS_URLS=/assets/oidc-frontend-hook.js
+      # Exclude /auth/* routes from frontend history API handler so our OIDC routes work
+      - N8N_ADDITIONAL_NON_UI_ROUTES=auth
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./hooks.js:/home/node/.n8n/hooks.js
+      - ./local-files:/files
+
+volumes:
+  n8n_data:
