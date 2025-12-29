@@ -616,7 +616,7 @@ function getFrontendScript() {
 		var button = document.createElement('button');
 		button.id = 'oidc-sso-button';
 		button.type = 'button';
-		button.textContent = 'Sign in with PocketID';
+		button.textContent = 'Sign in with SSO';
 		button.onclick = function() { window.location.href = '/auth/oidc/login'; };
 
 		if (buttonClasses) {
