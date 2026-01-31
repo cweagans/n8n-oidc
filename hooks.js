@@ -4,7 +4,7 @@
  * This file implements OIDC authentication support for n8n using only built-in Node.js modules.
  * It provides:
  * - OIDC discovery endpoint support
- * - Authorization code flow
+ * - Authorization code flow with PKCE
  * - User provisioning (JIT - Just In Time)
  * - Frontend customization to show OIDC login button
  *
@@ -111,12 +111,21 @@ async function fetchDiscoveryDocument() {
 }
 
 /**
- * Generate a random string for state/nonce
+ * Generate a random string for state/nonce/PKCE
  * @param {number} length
  * @returns {string}
  */
 function generateRandomString(length = 32) {
   return crypto.randomBytes(length).toString('hex');
+}
+
+/**
+ * Generate PKCE code challenge
+ * @param {string} codeVerifier
+ * @returns {string}
+ */
+function generateCodeChallenge(codeVerifier) {
+  return base64UrlEncode(crypto.createHash('sha256').update(codeVerifier).digest());
 }
 
 /**
@@ -160,16 +169,18 @@ function decodeJwt(token) {
 /**
  * Exchange authorization code for tokens
  * @param {string} code
+ * @param {string} codeVerifier
  * @param {object} discovery
  * @returns {Promise<object>}
  */
-async function exchangeCodeForTokens(code, discovery) {
+async function exchangeCodeForTokens(code, codeVerifier, discovery) {
   const params = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
     redirect_uri: config.redirectUri,
     client_id: config.clientId,
     client_secret: config.clientSecret,
+    code_verifier: codeVerifier, // PKCE parameter
   });
 
   const response = await makeRequest(discovery.token_endpoint, {
@@ -362,15 +373,19 @@ module.exports = {
 
             const state = generateRandomString();
             const nonce = generateRandomString();
+            const codeVerifier = generateRandomString(32); // PKCE code verifier
+            const codeChallenge = generateCodeChallenge(codeVerifier); // PKCE code challenge
 
-            // Store state and nonce in signed cookies
+            // Store state, nonce, and code verifier in signed cookies
             const stateCookie = createSignedCookie({ state }, cookieSecret);
             const nonceCookie = createSignedCookie({ nonce }, cookieSecret);
+            const pkceCookie = createSignedCookie({ codeVerifier }, cookieSecret); // Store code verifier for token exchange
 
             res.cookie('n8n-oidc-state', stateCookie, cookieOptions);
             res.cookie('n8n-oidc-nonce', nonceCookie, cookieOptions);
+            res.cookie('n8n-oidc-pkce', pkceCookie, cookieOptions); // Store PKCE code verifier
 
-            // Build authorization URL
+            // Build authorization URL with PKCE parameters
             const authUrl = new URL(discovery.authorization_endpoint);
             authUrl.searchParams.set('client_id', config.clientId);
             authUrl.searchParams.set('redirect_uri', config.redirectUri);
@@ -378,6 +393,8 @@ module.exports = {
             authUrl.searchParams.set('scope', config.scopes);
             authUrl.searchParams.set('state', state);
             authUrl.searchParams.set('nonce', nonce);
+            authUrl.searchParams.set('code_challenge', codeChallenge); // PKCE parameter
+            authUrl.searchParams.set('code_challenge_method', 'S256'); // PKCE parameter
 
             res.redirect(authUrl.toString());
           } catch (error) {
@@ -406,13 +423,15 @@ module.exports = {
             // Verify state
             const stateCookie = req.cookies['n8n-oidc-state'];
             const nonceCookie = req.cookies['n8n-oidc-nonce'];
+            const pkceCookie = req.cookies['n8n-oidc-pkce']; // Get PKCE code verifier
 
-            if (!stateCookie || !nonceCookie) {
+            if (!stateCookie || !nonceCookie || !pkceCookie) {
               return res.redirect('/signin?error=' + encodeURIComponent('Missing state cookies - session expired'));
             }
 
             const statePayload = verifySignedCookie(stateCookie, cookieSecret);
             const noncePayload = verifySignedCookie(nonceCookie, cookieSecret);
+            const pkcePayload = verifySignedCookie(pkceCookie, cookieSecret); // Verify PKCE cookie
 
             if (!statePayload || statePayload.state !== state) {
               return res.redirect('/signin?error=' + encodeURIComponent('Invalid state - possible CSRF attack'));
@@ -421,10 +440,11 @@ module.exports = {
             // Clear state cookies
             res.clearCookie('n8n-oidc-state');
             res.clearCookie('n8n-oidc-nonce');
+            res.clearCookie('n8n-oidc-pkce'); // Clear PKCE cookie
 
-            // Exchange code for tokens
+            // Exchange code for tokens with PKCE
             const discovery = await fetchDiscoveryDocument();
-            const tokens = await exchangeCodeForTokens(code, discovery);
+            const tokens = await exchangeCodeForTokens(code, pkcePayload.codeVerifier, discovery);
 
             // Verify nonce in ID token if present
             if (tokens.id_token) {
