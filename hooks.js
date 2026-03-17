@@ -16,6 +16,8 @@
  *
  * Optional:
  * - OIDC_SCOPES: Space-separated list of scopes (default: "openid email profile")
+ * - OIDC_DOMAINS: Comma-separated list of allowed domains (default: allows all domains)
+ * - OIDC_ALLOW_REGISTRATION: Setting to false will disable registration when the user is not found (default: true)
  */
 
 const https = require('https');
@@ -30,6 +32,8 @@ const config = {
   clientSecret: process.env.OIDC_CLIENT_SECRET,
   redirectUri: process.env.OIDC_REDIRECT_URI,
   scopes: process.env.OIDC_SCOPES || 'openid email profile',
+  domains: process.env.OIDC_DOMAINS || null,
+  allowRegistration: (process.env.OIDC_ALLOW_REGISTRATION || 'true') === 'true',
 };
 
 // Validate configuration
@@ -300,13 +304,18 @@ function createUserHash(user) {
 }
 
 /**
- * Check if email is valid
+ * Check if the email is valid and (optionally) matches the configured domain.
  * @param {string} email
  * @returns {boolean}
  */
 function isValidEmail(email) {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
+  if (!emailRegex.test(email)) {
+    return false;
+  }
+
+  return !config.domains
+    || config.domains.split(',').map(domain => domain.trim()).includes(email.split('@')[1]);
 }
 
 // n8n module paths (specific to the Docker image)
@@ -462,6 +471,11 @@ module.exports = {
             });
 
             if (!user) {
+              // Return an error if registration is disabled
+              if (!config.allowRegistration) {
+                return res.redirect('/signin?error=' + encodeURIComponent('User not found and registration is disabled'));
+              }
+
               // Check if this is the first user (should be owner)
               const userCount = await User.count();
 

@@ -61,9 +61,11 @@ Restart n8n to pick up the environment var changes + the new hooks.js.
 
 ### Optional
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OIDC_SCOPES` | `openid email profile` | Space-separated list of OIDC scopes |
+| Variable                  | Default                | Description                                                                            |
+|---------------------------|------------------------|----------------------------------------------------------------------------------------|
+| `OIDC_SCOPES`             | `openid email profile` | Space-separated list of OIDC scopes                                                    |
+| `OIDC_DOMAINS`            | `null`                 | Comma-separated list of domains to allow OIDC login. Leave blank to allow all domains. |
+| `OIDC_ALLOW_REGISTRATION` | `true`                 | Allow users to register new accounts                                                   |
 
 ## How It Works
 
