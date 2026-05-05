@@ -11,7 +11,7 @@
  * Environment Variables Required:
  * - OIDC_ISSUER_URL: The OIDC provider's issuer URL (e.g., https://auth.example.com)
  * - OIDC_CLIENT_ID: OAuth2 client ID
- * - OIDC_CLIENT_SECRET: OAuth2 client secret
+ * - OIDC_CLIENT_SECRET or OIDC_CLIENT_SECRET_FILE: OAuth2 client secret (file preferred)
  * - OIDC_REDIRECT_URI: The callback URL (e.g., https://n8n.example.com/auth/oidc/callback)
  *
  * Optional:
@@ -21,13 +21,30 @@
 const https = require('https');
 const http = require('http');
 const crypto = require('crypto');
+const fs = require('fs');
 const { URL, URLSearchParams } = require('url');
+
+/**
+ * Read client secret from a file path or plain env var.
+ * Docker secrets via OIDC_CLIENT_SECRET_FILE are preferred — the plaintext
+ * secret never appears in `docker inspect` or the process environment.
+ */
+function readClientSecret() {
+  if (process.env.OIDC_CLIENT_SECRET_FILE) {
+    try {
+      return fs.readFileSync(process.env.OIDC_CLIENT_SECRET_FILE, 'utf8').trim();
+    } catch (e) {
+      throw new Error(`[OIDC Hook] Failed to read OIDC_CLIENT_SECRET_FILE: ${e.message}`);
+    }
+  }
+  return process.env.OIDC_CLIENT_SECRET;
+}
 
 // Configuration from environment
 const config = {
   issuerUrl: process.env.OIDC_ISSUER_URL,
   clientId: process.env.OIDC_CLIENT_ID,
-  clientSecret: process.env.OIDC_CLIENT_SECRET,
+  clientSecret: readClientSecret(),
   redirectUri: process.env.OIDC_REDIRECT_URI,
   scopes: process.env.OIDC_SCOPES || 'openid email profile',
 };
@@ -37,7 +54,7 @@ function validateConfig() {
   const missing = [];
   if (!config.issuerUrl) missing.push('OIDC_ISSUER_URL');
   if (!config.clientId) missing.push('OIDC_CLIENT_ID');
-  if (!config.clientSecret) missing.push('OIDC_CLIENT_SECRET');
+  if (!config.clientSecret) missing.push('OIDC_CLIENT_SECRET or OIDC_CLIENT_SECRET_FILE');
   if (!config.redirectUri) missing.push('OIDC_REDIRECT_URI');
   return missing;
 }
@@ -264,7 +281,7 @@ function verifySignedCookie(cookie, secret) {
  */
 function getCookieSecret(context) {
   // Use a combination of environment variables to create a stable secret
-  const baseKey = process.env.N8N_ENCRYPTION_KEY || process.env.OIDC_CLIENT_SECRET || 'n8n-oidc-hook-secret';
+  const baseKey = process.env.N8N_ENCRYPTION_KEY || config.clientSecret || 'n8n-oidc-hook-secret';
   const hash = crypto.createHash('sha256').update(baseKey + '-oidc-state').digest('hex');
   return hash;
 }
