@@ -42,6 +42,28 @@ N8N_ADDITIONAL_NON_UI_ROUTES=auth
 EXTERNAL_FRONTEND_HOOKS_URLS=/assets/oidc-frontend-hook.js
 ```
 
+If you want to enable PKCE flow, configure your idp accordingly.
+
+Then, add environment variable (`OIDC_CLIENT_SECRET` won't be needed)
+- **OIDC_PKCE=true**
+
+You can also enable both client secret and PKCE flow.
+
+Just add both environment variables:
+- **OIDC_PKCE=true**
+- **Client Secret**
+
+```bash
+EXTERNAL_HOOK_FILES=/path/to/hooks.js
+OIDC_ISSUER_URL=https://auth.example.com
+OIDC_CLIENT_ID=your-client-id
+OIDC_CLIENT_SECRET=your-client-secret
+OIDC_PKCE=true
+OIDC_REDIRECT_URI=https://n8n.example.com/auth/oidc/callback
+N8N_ADDITIONAL_NON_UI_ROUTES=auth
+EXTERNAL_FRONTEND_HOOKS_URLS=/assets/oidc-frontend-hook.js
+```
+
 ### 3. Restart n8n
 
 Restart n8n to pick up the environment var changes + the new hooks.js.

@@ -4,17 +4,18 @@
  * This file implements OIDC authentication support for n8n using only built-in Node.js modules.
  * It provides:
  * - OIDC discovery endpoint support
- * - Authorization code flow
+ * - Authorization code flow with PKCE (RFC 7636)
  * - User provisioning (JIT - Just In Time)
  * - Frontend customization to show OIDC login button
  *
  * Environment Variables Required:
  * - OIDC_ISSUER_URL: The OIDC provider's issuer URL (e.g., https://auth.example.com)
  * - OIDC_CLIENT_ID: OAuth2 client ID
- * - OIDC_CLIENT_SECRET: OAuth2 client secret
  * - OIDC_REDIRECT_URI: The callback URL (e.g., https://n8n.example.com/auth/oidc/callback)
  *
  * Optional:
+ * - OIDC_CLIENT_SECRET: OAuth2 client secret (required if OIDC_PKCE is not true)
+ * - OIDC_PKCE: "true" (PKCE + client_secret if set), "false" (client_secret only), or auto when unset (PKCE if no OIDC_CLIENT_SECRET)
  * - OIDC_SCOPES: Space-separated list of scopes (default: "openid email profile")
  */
 
@@ -30,6 +31,9 @@ const config = {
   clientSecret: process.env.OIDC_CLIENT_SECRET,
   redirectUri: process.env.OIDC_REDIRECT_URI,
   scopes: process.env.OIDC_SCOPES || 'openid email profile',
+  pkce: process.env.OIDC_PKCE === 'false'
+    ? false
+    : process.env.OIDC_PKCE === 'true' || !process.env.OIDC_CLIENT_SECRET,
 };
 
 // Validate configuration
@@ -37,8 +41,8 @@ function validateConfig() {
   const missing = [];
   if (!config.issuerUrl) missing.push('OIDC_ISSUER_URL');
   if (!config.clientId) missing.push('OIDC_CLIENT_ID');
-  if (!config.clientSecret) missing.push('OIDC_CLIENT_SECRET');
   if (!config.redirectUri) missing.push('OIDC_REDIRECT_URI');
+  if (!config.pkce && !config.clientSecret) missing.push('OIDC_CLIENT_SECRET');
   return missing;
 }
 
@@ -161,16 +165,21 @@ function decodeJwt(token) {
  * Exchange authorization code for tokens
  * @param {string} code
  * @param {object} discovery
+ * @param {string} codeVerifier - PKCE code verifier
  * @returns {Promise<object>}
  */
-async function exchangeCodeForTokens(code, discovery) {
+async function exchangeCodeForTokens(code, discovery, codeVerifier) {
   const params = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
     redirect_uri: config.redirectUri,
     client_id: config.clientId,
-    client_secret: config.clientSecret,
+    code_verifier: codeVerifier,
   });
+
+  if (config.clientSecret) {
+    params.set('client_secret', config.clientSecret);
+  }
 
   const response = await makeRequest(discovery.token_endpoint, {
     method: 'POST',
@@ -354,6 +363,18 @@ module.exports = {
         };
 
         /**
+         * Generate PKCE code verifier and challenge
+         * @returns {{codeVerifier: string, codeChallenge: string}}
+         */
+        function generatePkceCodes() {
+          const codeVerifier = base64UrlEncode(crypto.randomBytes(32));
+          const codeChallenge = base64UrlEncode(
+            crypto.createHash('sha256').update(codeVerifier).digest()
+          );
+          return { codeVerifier, codeChallenge };
+        }
+
+        /**
          * OIDC Login endpoint - redirects to the OIDC provider
          */
         app.get('/auth/oidc/login', async (req, res) => {
@@ -379,6 +400,14 @@ module.exports = {
             authUrl.searchParams.set('state', state);
             authUrl.searchParams.set('nonce', nonce);
 
+            if (config.pkce) {
+              const { codeVerifier, codeChallenge } = generatePkceCodes();
+              const verifierCookie = createSignedCookie({ codeVerifier }, cookieSecret);
+              res.cookie('n8n-oidc-verifier', verifierCookie, cookieOptions);
+              authUrl.searchParams.set('code_challenge', codeChallenge);
+              authUrl.searchParams.set('code_challenge_method', 'S256');
+            }
+
             res.redirect(authUrl.toString());
           } catch (error) {
             console.error('[OIDC Hook] Login error:', error);
@@ -389,7 +418,7 @@ module.exports = {
         /**
          * OIDC Callback endpoint - handles the authorization code
          */
-        app.get('/auth/oidc/callback', async (req, res) => {
+        app.get('/rest/sso/oidc/callback', async (req, res) => {
           try {
             const { code, state, error, error_description } = req.query;
 
@@ -422,9 +451,24 @@ module.exports = {
             res.clearCookie('n8n-oidc-state');
             res.clearCookie('n8n-oidc-nonce');
 
+            // PKCE: retrieve code verifier if enabled
+            let codeVerifier = null;
+            if (config.pkce) {
+              const verifierCookie = req.cookies['n8n-oidc-verifier'];
+              if (!verifierCookie) {
+                return res.redirect('/signin?error=' + encodeURIComponent('Missing code verifier - session expired'));
+              }
+              const verifierPayload = verifySignedCookie(verifierCookie, cookieSecret);
+              if (!verifierPayload || !verifierPayload.codeVerifier) {
+                return res.redirect('/signin?error=' + encodeURIComponent('Invalid code verifier - session expired'));
+              }
+              codeVerifier = verifierPayload.codeVerifier;
+              res.clearCookie('n8n-oidc-verifier');
+            }
+
             // Exchange code for tokens
             const discovery = await fetchDiscoveryDocument();
-            const tokens = await exchangeCodeForTokens(code, discovery);
+            const tokens = await exchangeCodeForTokens(code, discovery, codeVerifier);
 
             // Verify nonce in ID token if present
             if (tokens.id_token) {
@@ -513,10 +557,10 @@ module.exports = {
           res.send(getFrontendScript());
         });
 
-        console.log('[OIDC Hook] OIDC routes registered:');
-        console.log('  - GET /auth/oidc/login');
-        console.log('  - GET /auth/oidc/callback');
-        console.log('  - GET /assets/oidc-frontend-hook.js');
+        console.log(`[OIDC Hook] OIDC routes registered (PKCE: ${config.pkce ? 'enabled' : 'disabled'}):`);
+            console.log('  - GET /auth/oidc/login');
+            console.log('  - GET /auth/oidc/callback');
+            console.log('  - GET /assets/oidc-frontend-hook.js');
       },
     ],
   },
