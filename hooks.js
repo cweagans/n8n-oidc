@@ -558,9 +558,9 @@ module.exports = {
         });
 
         console.log(`[OIDC Hook] OIDC routes registered (PKCE: ${config.pkce ? 'enabled' : 'disabled'}):`);
-            console.log('  - GET /auth/oidc/login');
-            console.log('  - GET /auth/oidc/callback');
-            console.log('  - GET /assets/oidc-frontend-hook.js');
+        console.log('  - GET /auth/oidc/login');
+        console.log('  - GET /auth/oidc/callback');
+        console.log('  - GET /assets/oidc-frontend-hook.js');
       },
     ],
   },
