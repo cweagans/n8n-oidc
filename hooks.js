@@ -283,7 +283,12 @@ function createAuthToken(user, jwtService) {
     usedMfa: false,
   };
 
-  return jwtService.sign(payload, { expiresIn: '7d' });
+  // n8n >= 2.43.0: sign(purpose, payload, options)
+  // n8n <  2.43.0: sign(payload, options)
+  if (typeof jwtService.signForResource === "function") {
+    return jwtService.sign("session", payload, { expiresIn: "7d" });
+  }
+  return jwtService.sign(payload, { expiresIn: "7d" });
 }
 
 /**
@@ -311,7 +316,7 @@ function isValidEmail(email) {
 
 // n8n module paths (specific to the Docker image)
 const N8N_DI_PATH = '/usr/local/lib/node_modules/n8n/node_modules/@n8n/di';
-const N8N_JWT_SERVICE_PATH = '/usr/local/lib/node_modules/n8n/dist/services/jwt.service.js';
+const N8N_JWT_SERVICE_PATH = '/usr/local/lib/node_modules/n8n/node_modules/@n8n/backend-services/dist/services/jwt.service.js';
 
 // Export the hooks
 module.exports = {
