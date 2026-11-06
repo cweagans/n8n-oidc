@@ -65,6 +65,19 @@ Restart n8n to pick up the environment var changes + the new hooks.js.
 |----------|---------|-------------|
 | `OIDC_SCOPES` | `openid email profile` | Space-separated list of OIDC scopes |
 
+## Testing against an n8n version
+
+`hooks.js` reaches into n8n's internals (the DI container and `AuthService`), and n8n moves those
+between minor releases, so check a new version before you move your pin:
+
+```bash
+test/run.sh 2.45.7          # any number of versions; needs podman
+```
+
+It starts the real `ghcr.io/n8n-io/n8n` image with the hook loaded, a fake OIDC provider and a
+throwaway SQLite database, then checks that the login redirects, the callback issues a session
+cookie, and n8n accepts that cookie. It touches no real identity provider.
+
 ## How It Works
 
 The `hooks.js` file uses n8n's external hooks feature to:
