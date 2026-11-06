@@ -270,36 +270,6 @@ function getCookieSecret(context) {
 }
 
 /**
- * Create the n8n auth cookie using n8n's JwtService
- * @param {object} user
- * @param {object} jwtService - n8n's JwtService instance
- * @returns {string}
- */
-function createAuthToken(user, jwtService) {
-  // n8n's JWT contains: { id, hash, browserId?, usedMfa? }
-  const payload = {
-    id: user.id,
-    hash: createUserHash(user),
-    usedMfa: false,
-  };
-
-  return jwtService.sign(payload, { expiresIn: '7d' });
-}
-
-/**
- * Create user hash for JWT (mimics n8n's AuthService.createJWTHash)
- * @param {object} user
- * @returns {string}
- */
-function createUserHash(user) {
-  const payload = [user.email, user.password || ''];
-  if (user.mfaEnabled && user.mfaSecret) {
-    payload.push(user.mfaSecret.substring(0, 3));
-  }
-  return crypto.createHash('sha256').update(payload.join(':')).digest('base64').substring(0, 10);
-}
-
-/**
  * Check if email is valid
  * @param {string} email
  * @returns {boolean}
@@ -309,9 +279,17 @@ function isValidEmail(email) {
   return emailRegex.test(email);
 }
 
-// n8n module paths (specific to the Docker image)
+// n8n module paths (specific to the Docker image). These are the upgrade risk:
+// re-check both against the target image before moving the n8n pin. 2.45.x
+// deleted dist/services/jwt.service.js, which the previous version of this hook
+// required, and n8n exited at startup.
+//
+// The session cookie is issued by n8n's own AuthService.issueCookie rather than
+// signed here. That keeps the JWT payload, the user hash (n8n hashes the whole
+// MFA secret; a copy of it here had drifted) and the cookie flags in step with
+// whatever n8n expects on its next release.
 const N8N_DI_PATH = '/usr/local/lib/node_modules/n8n/node_modules/@n8n/di';
-const N8N_JWT_SERVICE_PATH = '/usr/local/lib/node_modules/n8n/dist/services/jwt.service.js';
+const N8N_AUTH_SERVICE_PATH = '/usr/local/lib/node_modules/n8n/dist/auth/auth.service.js';
 
 // Export the hooks
 module.exports = {
@@ -330,10 +308,10 @@ module.exports = {
 
         console.log('[OIDC Hook] Initializing OIDC authentication...');
 
-        // Get n8n's JwtService from the DI container
+        // Get n8n's AuthService from the DI container
         const { Container } = require(N8N_DI_PATH);
-        const { JwtService } = require(N8N_JWT_SERVICE_PATH);
-        const jwtService = Container.get(JwtService);
+        const { AuthService } = require(N8N_AUTH_SERVICE_PATH);
+        const authService = Container.get(AuthService);
 
         const { app } = server;
         const cookieSecret = getCookieSecret();
@@ -344,13 +322,6 @@ module.exports = {
           secure: process.env.N8N_PROTOCOL === 'https',
           sameSite: 'lax',
           maxAge: 15 * 60 * 1000, // 15 minutes
-        };
-
-        const authCookieOptions = {
-          httpOnly: true,
-          secure: process.env.N8N_PROTOCOL === 'https',
-          sameSite: 'lax',
-          maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
         };
 
         /**
@@ -484,11 +455,10 @@ module.exports = {
               return res.redirect('/signin?error=' + encodeURIComponent('Failed to create or find user'));
             }
 
-            // Create auth token using n8n's JwtService
-            const authToken = createAuthToken(user, jwtService);
-
-            // Set the n8n auth cookie
-            res.cookie('n8n-auth', authToken, authCookieOptions);
+            // Issue the session cookie with n8n's own AuthService. usedMfa is
+            // false: the IdP did the authentication, and n8n's MFA gate does
+            // not apply to a user who never presented a local credential.
+            authService.issueCookie(res, user, false);
 
             // Redirect to home
             res.redirect('/');
